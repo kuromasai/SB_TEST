@@ -66,6 +66,7 @@ apt install -y \
   libxcb-xinerama0 \
   libxcb-cursor0 \
   libmagic1 \
+  fonts-ibm-plex \
   git \
   rsync \
   curl \
