@@ -246,7 +246,7 @@ html_content = f"""<!DOCTYPE html>
         {logo_html}
         <div>
             <h1>Station Blanche — Rapport d'analyse</h1>
-            <div class="subtitle">Usage interne CHU — {now}</div>
+            
         </div>
     </header>
 
