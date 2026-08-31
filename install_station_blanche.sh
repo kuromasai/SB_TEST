@@ -20,6 +20,18 @@ if ! grep -q 'VERSION_ID="13"' /etc/os-release; then
 fi
 
 #################################
+# Utilisateur autorisé à lancer Station Blanche
+#################################
+SB_USER="${1:-}"
+if [ -z "$SB_USER" ]; then
+  read -rp "[?] Nom de l'utilisateur qui doit pouvoir lancer Station Blanche : " SB_USER
+fi
+if ! id "$SB_USER" >/dev/null 2>&1; then
+  echo "[-] L'utilisateur '$SB_USER' n'existe pas sur ce système"
+  exit 1
+fi
+
+#################################
 # Variables
 #################################
 BASE="/opt/station-blanche"
@@ -152,30 +164,25 @@ TOTAL_COUNT=$(find "$BASE/yara_rules" -name "*.yar" | wc -l)
 echo "[+] Total règles YARA : $TOTAL_COUNT"
 
 #################################
-# Permissions sécurisées
-#################################
-echo "[+] Application des permissions"
-chown -R root:root "$BASE"
-chmod -R 750 "$BASE"
-
-# chmod +x uniquement sur les .sh
-find "$BASE/bin/" -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
-
-# chmod +x sur les .py avec shebang
-for f in "$BASE/bin/"*.py; do
-  [ -f "$f" ] || continue
-  if head -1 "$f" | grep -q "^#!"; then
-    chmod +x "$f"
-  fi
-done
-
-#################################
 # Création dossiers runtime
 #################################
 echo "[+] Création des dossiers runtime"
 mkdir -p "$BASE/logs" "$BASE/mount" "$BASE/quarantine" "$BASE/reports"
-chmod 700 "$BASE/logs" "$BASE/quarantine"
-chmod 750 "$BASE/mount" "$BASE/reports"
+
+#################################
+# Hardening : droits, wrapper, sudoers
+#################################
+# Toute la logique de permissions (chown/chmod, wrapper /usr/local/bin,
+# règle sudoers) vit dans harden_station_blanche.sh pour rester
+# ré-exécutable indépendamment du reste du déploiement.
+if [ -f "$BASE/harden_station_blanche.sh" ]; then
+  echo "[+] Application du hardening pour l'utilisateur '$SB_USER'"
+  chmod +x "$BASE/harden_station_blanche.sh"
+  "$BASE/harden_station_blanche.sh" "$SB_USER"
+else
+  echo "[-] harden_station_blanche.sh introuvable dans $BASE — hardening non appliqué"
+  exit 1
+fi
 
 #################################
 echo ""
@@ -184,6 +191,4 @@ echo "[✓] Station Blanche installée dans $BASE"
 echo "[✓] Règles YARA Neo23x0 : $BASE/yara_rules/signature-base/yara/"
 echo "[✓] Règles YARA Elastic  : $BASE/yara_rules/elastic-artifacts/yara/rules/"
 echo "[✓] Script principal : $BASE/bin/station_blanche.py"
-echo ""
-echo "[i] Pour lancer depuis la session bureau :"
-echo "    sudo DISPLAY=\$DISPLAY XAUTHORITY=\$XAUTHORITY python3 $BASE/bin/station_blanche.py"
+echo "[✓] Utilisateur '$SB_USER' peut lancer l'appli via la commande : station-blanche"
