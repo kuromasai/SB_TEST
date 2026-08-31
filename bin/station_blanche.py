@@ -55,7 +55,7 @@ STYLE = f"""
 QMainWindow, QWidget {{
     background-color: {CHU_BG};
     color: {CHU_TEXT};
-    font-family: 'Segoe UI', 'Arial', sans-serif;
+    font-family: 'IBM Plex Sans', 'Segoe UI', 'Arial', sans-serif;
 }}
 
 QLabel#title {{
@@ -185,7 +185,7 @@ QTextEdit {{
     color: {CHU_TEXT};
     border: 1px solid {CHU_BORDER};
     border-radius: 6px;
-    font-family: 'Consolas', 'Monospace';
+    font-family: 'IBM Plex Mono', 'Consolas', 'Monospace';
     font-size: 11px;
     padding: 8px;
 }}
@@ -494,7 +494,7 @@ class StationBlanc(QMainWindow):
         title.setObjectName("title")
         title_col.addWidget(title)
 
-        subtitle = QLabel("Analyse de périphériques USB — usage interne CHU")
+        subtitle = QLabel("Analyse de périphériques USB")
         subtitle.setObjectName("subtitle")
         title_col.addWidget(subtitle)
 

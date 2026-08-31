@@ -120,7 +120,7 @@ html_content = f"""<!DOCTYPE html>
     <style>
         * {{ box-sizing: border-box; }}
         body {{
-            font-family: 'Segoe UI', Arial, sans-serif;
+            font-family: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;
             background: {CHU_BG};
             color: {CHU_TEXT};
             margin: 0;
@@ -227,7 +227,7 @@ html_content = f"""<!DOCTYPE html>
         }}
 
         code {{
-            font-family: 'Consolas', Monospace;
+            font-family: 'IBM Plex Mono', 'Consolas', Monospace;
             font-size: 0.8em;
             color: {CHU_GRAY};
         }}
