@@ -49,6 +49,19 @@ SIGBASE_REF="${SIGBASE_REF:-}"        # commit de Neo23x0/signature-base
 ELASTIC_REF="${ELASTIC_REF:-}"        # commit de elastic/protections-artifacts
 YARA_X_VERSION="${YARA_X_VERSION:-}"  # version de yara-x-cli (crates.io)
 
+# Dashboard de traçabilité (facultatif à l'installation, modifiable ensuite
+# dans /etc/station-blanche/dashboard.conf). Par exemple :
+#   sudo SB_NAME=SB_RH DASHBOARD_URL=https://10.0.0.50:8443 \
+#        DASHBOARD_TOKEN=<jeton> DASHBOARD_CA=/chemin/dashboard.crt \
+#        ./install_station_blanche.sh <utilisateur>
+# SB_NAME doit être de la forme SB_<CODE SERVICE> pour le rattachement
+# automatique au service dans le dashboard.
+SB_NAME="${SB_NAME:-}"
+DASHBOARD_URL="${DASHBOARD_URL:-}"
+DASHBOARD_TOKEN="${DASHBOARD_TOKEN:-}"
+DASHBOARD_CA="${DASHBOARD_CA:-}"
+SB_CONF_DIR="/etc/station-blanche"
+
 # Clone un dépôt puis se place sur la référence demandée si elle est fournie
 clone_at_ref() {
   local url="$1" dest="$2" ref="$3"
@@ -203,6 +216,7 @@ rsync -a --delete \
   --exclude='/mount/' \
   --exclude='/quarantine/' \
   --exclude='/reports/' \
+  --exclude='/spool/' \
   --exclude='/yara_rules/compiled_rules.yarc*' \
   "$SOURCE_DIR/" \
   "$BASE/"
@@ -236,6 +250,55 @@ echo "[+] Total règles YARA : $TOTAL_COUNT"
 #################################
 echo "[+] Création des dossiers runtime"
 mkdir -p "$BASE/logs" "$BASE/mount" "$BASE/quarantine" "$BASE/reports"
+# Scans en attente d'envoi au dashboard : exclu du rsync, survit aux réinstallations
+mkdir -p "$BASE/spool/pending"
+
+#################################
+# Envoi au dashboard de traçabilité
+#################################
+echo "[+] Configuration de l'envoi au dashboard"
+mkdir -p "$SB_CONF_DIR"
+chmod 700 "$SB_CONF_DIR"
+if [ -n "$DASHBOARD_CA" ]; then
+  if [ -f "$DASHBOARD_CA" ]; then
+    install -m 644 "$DASHBOARD_CA" "$SB_CONF_DIR/dashboard-ca.pem"
+    echo "[+] Certificat du dashboard installé : $SB_CONF_DIR/dashboard-ca.pem"
+  else
+    echo "[!] DASHBOARD_CA introuvable ($DASHBOARD_CA) — certificat non installé"
+  fi
+fi
+if [ -n "$DASHBOARD_URL" ] || [ ! -f "$SB_CONF_DIR/dashboard.conf" ]; then
+  # Configuration écrite si des valeurs sont fournies, ou modèle à compléter
+  # si aucune configuration n'existe ; une configuration existante est gardée.
+  CA_LINE=""
+  [ -f "$SB_CONF_DIR/dashboard-ca.pem" ] && CA_LINE="$SB_CONF_DIR/dashboard-ca.pem"
+  cat > "$SB_CONF_DIR/dashboard.conf" <<EOF
+# Envoi des scans au dashboard de traçabilité (lu par sync_dashboard.py).
+# Test après modification : sudo python3 $BASE/bin/sync_dashboard.py --test
+[dashboard]
+# Nom de la station, forme SB_<CODE SERVICE> (ex. SB_RH) ; vide = nom d'hôte
+station = ${SB_NAME}
+# URL du dashboard (seule adresse à autoriser en sortie dans le pare-feu)
+url = ${DASHBOARD_URL}
+# Jeton de la station, affiché une seule fois à sa création dans le dashboard
+token = ${DASHBOARD_TOKEN}
+# Certificat du dashboard (épinglé)
+ca = ${CA_LINE}
+EOF
+  chmod 600 "$SB_CONF_DIR/dashboard.conf"
+else
+  echo "[+] Configuration existante conservée : $SB_CONF_DIR/dashboard.conf"
+fi
+if ! grep -qE '^url = .+' "$SB_CONF_DIR/dashboard.conf" || ! grep -qE '^token = .+' "$SB_CONF_DIR/dashboard.conf"; then
+  echo "[!] Dashboard non configuré : les scans seront gardés en attente dans $BASE/spool/"
+  echo "[!] Compléter $SB_CONF_DIR/dashboard.conf puis tester : sudo python3 $BASE/bin/sync_dashboard.py --test"
+fi
+
+echo "[+] Installation du service d'envoi (timer toutes les 10 min)"
+install -m 644 "$BASE/systemd/station-blanche-sync.service" /etc/systemd/system/
+install -m 644 "$BASE/systemd/station-blanche-sync.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now station-blanche-sync.timer
 
 #################################
 # Hardening : droits, wrapper, sudoers
@@ -260,5 +323,7 @@ echo "[✓] Règles YARA Neo23x0 : $BASE/yara_rules/signature-base/yara/"
 echo "[✓] Règles YARA Elastic  : $BASE/yara_rules/elastic-artifacts/yara/rules/"
 echo "[✓] Script principal : $BASE/bin/station_blanche.py"
 echo "[✓] Mise à jour des signatures : sudo bash $BASE/update_signatures.sh"
+echo "[✓] Envoi au dashboard : $SB_CONF_DIR/dashboard.conf (test : sudo python3 $BASE/bin/sync_dashboard.py --test)"
+echo "[!] Pare-feu : autoriser la sortie vers l'adresse et le port du dashboard (non fait par ce script)"
 echo "[✓] Les règles YARA seront compilées au premier scan (plus long que les suivants)"
 echo "[✓] Utilisateur '$SB_USER' peut lancer l'appli via la commande : station-blanche"

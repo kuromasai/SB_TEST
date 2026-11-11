@@ -1,0 +1,11 @@
+[Unit]
+Description=Station Blanche — envoi des scans au dashboard de traçabilité
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/station-blanche/bin/sync_dashboard.py
+# Un gros scan (dizaines de milliers de fichiers) peut prendre du temps à envoyer
+TimeoutStartSec=30min
+Nice=10

@@ -37,4 +37,7 @@ for repo in signature-base elastic-artifacts; do
   fi
 done
 
+# Signal de vie immédiat : le dashboard voit tout de suite les nouvelles versions
+systemctl start --no-block station-blanche-sync.service 2>/dev/null || true
+
 echo "[✓] Mise à jour terminée — les règles YARA seront recompilées au prochain scan"

@@ -44,6 +44,7 @@ STEPS = [
     ("Corrélation",        "correlate.py"),
     ("Quarantaine",        "quarantine.py"),
     ("Rapport",            "generate_report.py"),
+    ("Envoi dashboard",    "export_scan.py"),
 ]
 # Index de chaque étape, dérivé de STEPS : réordonner STEPS suffit
 STEP_IDX = {label: i for i, (label, _) in enumerate(STEPS)}
@@ -54,6 +55,8 @@ CLAMAV_TIMEOUT = 4 * 3600
 YARA_COMPILE_TIMEOUT = 30 * 60
 YARA_TIMEOUT = 4 * 3600
 SYSTEM_CMD_TIMEOUT = 60
+# Mise en file d'envoi : local uniquement (pas de réseau), donc rapide
+EXPORT_TIMEOUT = 5 * 60
 
 CLAMD_CONF = "/etc/clamav/clamd.conf"
 # Options clamd indispensables pour qu'un fichier non analysé soit signalé
@@ -321,6 +324,7 @@ class ScanWorker(QThread):
         self.scan_info = {}
         self._proc = None
         self._cancelled = False
+        self._exported = False
         self._lock = threading.Lock()
 
     def emit_log(self, msg, level="info"):
@@ -431,11 +435,38 @@ class ScanWorker(QThread):
         try:
             self._run_scan()
         except ScanCancelled:
+            self._export_scan("ANNULE", "Scan annulé par l'opérateur.")
             self.error_signal.emit("Scan annulé par l'opérateur.")
         except StepError as e:
+            self._export_scan("ERREUR", str(e))
             self.error_signal.emit(str(e))
         except Exception as e:
+            self._export_scan("ERREUR", f"Erreur inattendue : {e}")
             self.error_signal.emit(f"Erreur inattendue : {e}")
+
+    def _export_scan(self, status, message=""):
+        """Met le scan en file d'envoi vers le dashboard (export_scan.py).
+        Jamais bloquant : un échec est signalé dans le log sans faire échouer
+        le scan, et l'envoi réseau est fait à part par le service de synchro.
+        Volontairement hors de run_cmd : il doit aussi tourner après une
+        annulation, pour garder la trace du branchement de la clé."""
+        # Pas de scan_info écrit par CE scan : ne pas renvoyer celui d'un scan précédent
+        if self._exported or not self.scan_info:
+            return
+        self._exported = True
+        cmd = ["python3", f"{BIN}/export_scan.py", "--statut", status]
+        if message:
+            cmd.append(f"--message={message}")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                                  timeout=EXPORT_TIMEOUT)
+            for line in (proc.stdout + proc.stderr).splitlines():
+                if line.strip():
+                    self.emit_log(line, "warn" if proc.returncode else "info")
+            if proc.returncode != 0:
+                self.emit_log("[!] Envoi au dashboard non préparé — le résultat du scan reste valide", "warn")
+        except Exception as e:
+            self.emit_log(f"[!] Envoi au dashboard non préparé ({e}) — le résultat du scan reste valide", "warn")
 
     def _write_scan_info(self):
         write_json("scan_info.json", self.scan_info)
@@ -593,6 +624,11 @@ class ScanWorker(QThread):
         self.run_python_step("Corrélation", "correlate.py")
         self.run_python_step("Quarantaine", "quarantine.py")
         self.run_python_step("Rapport", "generate_report.py")
+
+        # Étape : Envoi dashboard (non bloquante, cf _export_scan)
+        self.step_signal.emit(STEP_IDX["Envoi dashboard"])
+        self.emit_log("[+] Envoi dashboard")
+        self._export_scan("TERMINE")
 
         # Trouver le rapport le plus récent
         reports = sorted(glob.glob(f"{REPORTS}/report_*.html"))

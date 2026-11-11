@@ -1,0 +1,10 @@
+[Unit]
+Description=Station Blanche — envoi périodique au dashboard (signal de vie + scans en attente)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

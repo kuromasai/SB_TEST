@@ -4,8 +4,10 @@ common.py — Constantes et fonctions partagées par l'interface et les scripts
 du pipeline. Les scripts sont lancés via `python3 /opt/station-blanche/bin/x.py`,
 donc bin/ est dans sys.path et `import common` fonctionne sans configuration.
 """
+import configparser
 import json
 import os
+import socket
 import stat
 import subprocess
 from datetime import datetime
@@ -18,6 +20,16 @@ REPORTS = f"{BASE}/reports"
 QUARANTINE = f"{BASE}/quarantine"
 YARA_RULES = f"{BASE}/yara_rules"
 LOGO_PATH = f"{BASE}/icon/chu_rouen_logo.png"
+
+# Envoi au dashboard : les scans attendent dans spool/pending/ jusqu'à ce que
+# le dashboard en accuse réception (renvoi automatique s'il est injoignable).
+SPOOL = f"{BASE}/spool"
+SPOOL_PENDING = f"{SPOOL}/pending"
+SPOOL_REJECTED = f"{SPOOL}/rejected"
+# Hors de /opt/station-blanche : survit aux réinstallations (rsync --delete)
+DASHBOARD_CONF = "/etc/station-blanche/dashboard.conf"
+# Version du format des envois, vérifiée par le dashboard
+PAYLOAD_FORMAT = 1
 
 # Palette extraite du logo CHU Rouen Normandie (interface + rapport)
 CHU_BLUE_DARK  = "#005EAA"   # "CHU"
@@ -117,3 +129,50 @@ def yara_rules_info():
 
 def age_days(date):
     return (datetime.now() - date).days if date else None
+
+
+def signatures_info():
+    """Versions des signatures sous une forme sérialisable, pour le dashboard."""
+    clam_version, clam_date = clamav_db_info()
+    return {
+        "clamav": {
+            "version": clam_version,
+            "db_date": clam_date.isoformat() if clam_date else None,
+        },
+        "yara": [
+            {"name": name, "commit": commit, "date": date.date().isoformat() if date else None}
+            for name, commit, date in yara_rules_info()
+        ],
+    }
+
+
+def _dashboard_section():
+    """Section [dashboard] de DASHBOARD_CONF, ou {} si absente ou illisible."""
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(DASHBOARD_CONF, encoding="utf-8")
+    except (configparser.Error, OSError):
+        return {}
+    return dict(parser["dashboard"]) if parser.has_section("dashboard") else {}
+
+
+def station_name():
+    """Nom de la station (ex. SB_RH) : celui de la configuration du dashboard,
+    sinon le nom d'hôte."""
+    return _dashboard_section().get("station", "").strip() or socket.gethostname()
+
+
+def load_dashboard_config():
+    """Lit DASHBOARD_CONF. Renvoie un dict {station, url, token, ca} ou None
+    si l'envoi n'est pas configuré (fichier absent, URL ou jeton vides)."""
+    section = _dashboard_section()
+    url = section.get("url", "").strip().rstrip("/")
+    token = section.get("token", "").strip()
+    if not url or not token:
+        return None
+    return {
+        "station": station_name(),
+        "url": url,
+        "token": token,
+        "ca": section.get("ca", "").strip() or None,
+    }
