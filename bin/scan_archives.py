@@ -25,6 +25,14 @@ ZIP_MIMES = {"application/zip", "application/java-archive"}
 SEVENZIP_MIMES = {"application/x-7z-compressed"}
 RAR_MIMES = {"application/x-rar", "application/vnd.rar", "application/x-rar-compressed"}
 
+# Repli si libmagic ne reconnaît pas l'archive (fichier abîmé, en-tête inhabituel)
+ARCHIVE_SIGNATURES = [
+    (b"PK\x03\x04", "zip"),
+    (b"7z\xbc\xaf\x27\x1c", "7z"),
+    (b"Rar!\x1a\x07", "rar"),
+]
+ARCHIVE_EXTS = {".zip": "zip", ".jar": "zip", ".7z": "7z", ".rar": "rar"}
+
 
 def is_password_error(exc):
     # py7zr et rarfile lèvent une exception PasswordRequired quand l'en-tête est chiffré
@@ -73,6 +81,27 @@ def check_rar(abs_path):
     return []
 
 
+def archive_kind(abs_path, rel_path, mime):
+    """Type d'archive d'après le MIME, puis la signature, puis l'extension.
+    libmagic seul ne suffit pas : une archive abîmée n'est plus reconnue comme
+    zip et passerait sans contrôle alors que c'est justement un cas à signaler."""
+    if mime in ZIP_MIMES:
+        return "zip"
+    if mime in SEVENZIP_MIMES:
+        return "7z"
+    if mime in RAR_MIMES:
+        return "rar"
+    try:
+        with open(abs_path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        head = b""
+    for signature, kind in ARCHIVE_SIGNATURES:
+        if head.startswith(signature):
+            return kind
+    return ARCHIVE_EXTS.get(os.path.splitext(rel_path)[1].lower())
+
+
 def main():
     files = load_json("files.json")
 
@@ -84,13 +113,14 @@ def main():
         try:
             mime = magic.from_file(abs_path, mime=True)
         except Exception:
-            continue
+            mime = ""
 
-        if mime in ZIP_MIMES:
+        kind = archive_kind(abs_path, rel_path, mime)
+        if kind == "zip":
             flags = check_zip(abs_path)
-        elif mime in SEVENZIP_MIMES:
+        elif kind == "7z":
             flags = check_7z(abs_path)
-        elif mime in RAR_MIMES:
+        elif kind == "rar":
             flags = check_rar(abs_path)
         else:
             continue

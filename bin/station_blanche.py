@@ -348,10 +348,12 @@ class ScanWorker(QThread):
         if self._cancelled:
             raise ScanCancelled()
 
-    def run_cmd(self, cmd, timeout, stdout_path=None, max_err_lines=50):
+    def run_cmd(self, cmd, timeout, stdout_path=None, max_err_lines=50, quiet_on_success=False):
         """Lance `cmd`, affiche sa sortie dans le log et renvoie le code retour.
         Si `stdout_path` est donné, stdout y est aussi écrit et stderr est
-        gardé à part (affiché à la fin, tronqué à `max_err_lines` lignes)."""
+        gardé à part (affiché à la fin, tronqué à `max_err_lines` lignes).
+        Avec `quiet_on_success`, stderr n'est affiché qu'en cas d'échec ; en cas
+        de succès, seul le nombre d'avertissements est indiqué."""
         self._check_cancel()
         err_file = tempfile.TemporaryFile() if stdout_path else None
         proc = subprocess.Popen(
@@ -393,10 +395,20 @@ class ScanWorker(QThread):
             err_file.seek(0)
             err_lines = [l.rstrip() for l in err_file.read().decode("utf-8", "replace").splitlines() if l.strip()]
             err_file.close()
-            for l in err_lines[:max_err_lines]:
-                self.emit_log(l, "warn")
-            if len(err_lines) > max_err_lines:
-                self.emit_log(f"[~] … {len(err_lines) - max_err_lines} ligne(s) supplémentaire(s) masquée(s)", "warn")
+            if quiet_on_success and proc.returncode == 0:
+                warnings = sum(1 for l in err_lines if l.lstrip().startswith("warning"))
+                if warnings:
+                    self.emit_log(f"[~] {warnings} avertissement(s) sans conséquence masqué(s)")
+            else:
+                if quiet_on_success:
+                    # Échec : on montre d'abord les vraies erreurs, pas les avertissements
+                    errors = [i for i, l in enumerate(err_lines) if l.lstrip().startswith("error")]
+                    if errors:
+                        err_lines = err_lines[errors[0]:]
+                for l in err_lines[:max_err_lines]:
+                    self.emit_log(l, "warn")
+                if len(err_lines) > max_err_lines:
+                    self.emit_log(f"[~] … {len(err_lines) - max_err_lines} ligne(s) supplémentaire(s) masquée(s)", "warn")
 
         self._check_cancel()
         if timed_out.is_set():
@@ -644,7 +656,8 @@ class ScanWorker(QThread):
                 except OSError:
                     shutil.copy2(rule_path, dest)
             ret = self.run_cmd(["yr", "compile", "--output", tmp_out, filtered_dir],
-                               YARA_COMPILE_TIMEOUT, stdout_path=os.devnull)
+                               YARA_COMPILE_TIMEOUT, stdout_path=os.devnull,
+                               quiet_on_success=True)
         finally:
             shutil.rmtree(filtered_dir, ignore_errors=True)
         if ret != 0 or not os.path.exists(tmp_out):

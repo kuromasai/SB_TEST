@@ -37,7 +37,7 @@ sur la station.
 | `suspect/archive_mot_de_passe.7z` | SUSPECT | `ARCHIVE_PASSWORD_PROTECTED` |
 | `suspect/archive_corrompue.zip` | SUSPECT | `ARCHIVE_CORRUPTED_OR_INVALID` |
 | `suspect/pdf_javascript.pdf` | SUSPECT | `PDF_JAVASCRIPT`, `PDF_AUTO_ACTION` |
-| `suspect/pdf_obfusque.pdf` | SUSPECT | idem, avec noms obfusqués (`/J#61vaScript`) |
+| `suspect/pdf_obfusque.pdf` | INFECTÉ | ClamAV (heuristique PDF sur les noms obfusqués) + `PDF_JAVASCRIPT`, `PDF_AUTO_ACTION` |
 | `suspect/pdf_launch.pdf` | SUSPECT | `PDF_AUTO_ACTION`, `PDF_LAUNCH_ACTION` |
 | `suspect/macro_autoexec.doc` | SUSPECT | `MACRO_AUTOEXEC` |
 | `suspect/macro_suspecte.doc` | SUSPECT | `MACRO_AUTOEXEC`, `MACRO_SUSPICIOUS` |
