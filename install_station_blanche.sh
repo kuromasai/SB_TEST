@@ -39,6 +39,28 @@ BASE="/opt/station-blanche"
 REPO_URL="https://github.com/kuromasai/test_sb.git"
 YARA_RULES_URL="https://github.com/Neo23x0/signature-base.git"
 ELASTIC_RULES_URL="https://github.com/elastic/protections-artifacts.git"
+CLAMD_CONF="/etc/clamav/clamd.conf"
+
+# Versions figées (installation reproductible). Vide = dernière version, avec
+# un avertissement. À renseigner avec un tag/commit validé, par ex. :
+#   sudo SB_REF=v1.0 SIGBASE_REF=<commit> ./install_station_blanche.sh <utilisateur>
+SB_REF="${SB_REF:-}"                  # tag ou commit du dépôt Station Blanche
+SIGBASE_REF="${SIGBASE_REF:-}"        # commit de Neo23x0/signature-base
+ELASTIC_REF="${ELASTIC_REF:-}"        # commit de elastic/protections-artifacts
+YARA_X_VERSION="${YARA_X_VERSION:-}"  # version de yara-x-cli (crates.io)
+
+# Clone un dépôt puis se place sur la référence demandée si elle est fournie
+clone_at_ref() {
+  local url="$1" dest="$2" ref="$3"
+  git clone "$url" "$dest"
+  if [ -n "$ref" ]; then
+    git -C "$dest" checkout --quiet "$ref"
+    echo "[+] $(basename "$dest") figé sur $ref"
+  else
+    echo "[!] $(basename "$dest") : aucune version figée, dernière version utilisée"
+  fi
+}
+
 TMP_DIR=$(mktemp -d /tmp/station-blanche-install-XXXXXX)
 
 # Nettoyage du dossier temporaire à la fin quoi qu'il arrive
@@ -87,7 +109,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --defaul
 source /opt/cargo/env
 
 echo "[+] Compilation de YARA-X (yr) via cargo"
-cargo install yara-x-cli --root /usr/local
+# --locked : utilise les versions de dépendances publiées avec le crate
+if [ -n "$YARA_X_VERSION" ]; then
+  cargo install yara-x-cli --locked --version "$YARA_X_VERSION" --root /usr/local
+else
+  echo "[!] yara-x-cli : aucune version figée, dernière version utilisée"
+  cargo install yara-x-cli --locked --root /usr/local
+fi
 if ! command -v yr >/dev/null 2>&1; then
   echo "[-] yr introuvable dans le PATH après compilation — vérifier /usr/local/bin"
   exit 1
@@ -98,7 +126,7 @@ echo "[+] $(yr --version)"
 # Clone du repo Station Blanche
 #################################
 echo "[+] Clonage du repo Station Blanche"
-git clone "$REPO_URL" "$TMP_DIR/Station-blanche"
+clone_at_ref "$REPO_URL" "$TMP_DIR/Station-blanche" "$SB_REF"
 SOURCE_DIR="$TMP_DIR/Station-blanche"
 
 #################################
@@ -114,8 +142,8 @@ fi
 #################################
 # Dépendances Python pour l'étape "Analyse documents" (scan_docs.py)
 #################################
-echo "[+] Installation des dépendances Python pour l'analyse Office/PDF"
-pip3 install --break-system-packages python-magic oletools
+echo "[+] Installation des dépendances Python pour l'analyse Office/PDF/archives"
+pip3 install --break-system-packages python-magic oletools py7zr rarfile
 
 #################################
 # Mise à jour signatures ClamAV
@@ -124,6 +152,30 @@ echo "[+] Mise à jour ClamAV"
 systemctl stop clamav-freshclam || true
 freshclam
 systemctl start clamav-freshclam || true
+
+#################################
+# Configuration du démon clamd
+#################################
+# L'interface utilise clamdscan (signatures gardées en mémoire, pas de
+# rechargement à chaque scan) uniquement si clamd signale les fichiers trop
+# gros et le contenu chiffré ; sinon elle retombe sur clamscan.
+echo "[+] Configuration de clamd"
+set_clamd_option() {
+  local key="$1" value="$2"
+  if grep -qE "^[#[:space:]]*${key}[[:space:]]" "$CLAMD_CONF"; then
+    sed -i -E "s|^[#[:space:]]*${key}[[:space:]].*|${key} ${value}|" "$CLAMD_CONF"
+  else
+    echo "${key} ${value}" >> "$CLAMD_CONF"
+  fi
+}
+if [ -f "$CLAMD_CONF" ]; then
+  set_clamd_option AlertExceedsMax yes
+  set_clamd_option AlertEncrypted yes
+  systemctl enable clamav-daemon || true
+  systemctl restart clamav-daemon || echo "[!] clamd n'a pas démarré — clamscan sera utilisé"
+else
+  echo "[!] $CLAMD_CONF introuvable — clamscan sera utilisé"
+fi
 
 #################################
 # Déploiement Station Blanche
@@ -135,8 +187,15 @@ else
   mkdir -p "$BASE"
 fi
 
+# Les dossiers runtime sont exclus : sans ça, --delete effacerait la
+# quarantaine, les rapports et les logs à chaque réinstallation.
 rsync -a --delete \
   --exclude='.git' \
+  --exclude='/logs/' \
+  --exclude='/mount/' \
+  --exclude='/quarantine/' \
+  --exclude='/reports/' \
+  --exclude='/yara_rules/compiled_rules.yarc*' \
   "$SOURCE_DIR/" \
   "$BASE/"
 
@@ -146,7 +205,7 @@ rsync -a --delete \
 echo "[+] Clonage des règles YARA (Neo23x0/signature-base)"
 # Supprimer l'ancien dossier si présent (reinstall)
 rm -rf "$BASE/yara_rules/signature-base"
-git clone "$YARA_RULES_URL" "$BASE/yara_rules/signature-base"
+clone_at_ref "$YARA_RULES_URL" "$BASE/yara_rules/signature-base" "$SIGBASE_REF"
 
 RULES_COUNT=$(find "$BASE/yara_rules/signature-base/yara" -name "*.yar" | wc -l)
 echo "[+] $RULES_COUNT fichiers Neo23x0 téléchargés"
@@ -156,7 +215,7 @@ echo "[+] $RULES_COUNT fichiers Neo23x0 téléchargés"
 #################################
 echo "[+] Clonage des règles YARA (elastic/protections-artifacts)"
 rm -rf "$BASE/yara_rules/elastic-artifacts"
-git clone "$ELASTIC_RULES_URL" "$BASE/yara_rules/elastic-artifacts"
+clone_at_ref "$ELASTIC_RULES_URL" "$BASE/yara_rules/elastic-artifacts" "$ELASTIC_REF"
 
 ELASTIC_COUNT=$(find "$BASE/yara_rules/elastic-artifacts/yara/rules" -name "*.yar" | wc -l)
 echo "[+] $ELASTIC_COUNT fichiers Elastic téléchargés"
@@ -192,4 +251,6 @@ echo "[✓] Station Blanche installée dans $BASE"
 echo "[✓] Règles YARA Neo23x0 : $BASE/yara_rules/signature-base/yara/"
 echo "[✓] Règles YARA Elastic  : $BASE/yara_rules/elastic-artifacts/yara/rules/"
 echo "[✓] Script principal : $BASE/bin/station_blanche.py"
+echo "[✓] Mise à jour des signatures : sudo bash $BASE/update_signatures.sh"
+echo "[✓] Les règles YARA seront compilées au premier scan (plus long que les suivants)"
 echo "[✓] Utilisateur '$SB_USER' peut lancer l'appli via la commande : station-blanche"

@@ -1,47 +1,53 @@
 #!/usr/bin/env python3
-import json
-import os
+"""
+correlate.py — Joint toutes les sources sur le chemin relatif et calcule le verdict.
 
-LOGS = "/opt/station-blanche/logs"
+Règle :
+- détection ClamAV (hors heuristiques ci-dessous) -> INFECTED
+- sinon, l'un des cas suivants -> SUSPICIOUS :
+  * ClamAV : erreur de lecture, limite dépassée (Heuristics.Limits.Exceeded*),
+    contenu chiffré (Heuristics.Encrypted*) — le fichier n'a pas été analysé ;
+  * correspondance YARA, flag document, flag archive ;
+  * fichier spécial ou illisible (special.json).
+- sinon -> CLEAN
+"""
+from common import load_json, write_json
 
-with open(f"{LOGS}/files.json") as f:
-    files = json.load(f)
+# Heuristiques ClamAV qui signifient « pas pu analyser », pas « malveillant »
+CLAM_SUSPICIOUS_PREFIXES = ("Heuristics.Limits.Exceeded", "Heuristics.Encrypted")
 
-with open(f"{LOGS}/clamav.json") as f:
-    clamav = json.load(f)
+files = load_json("files.json")
+clamav = load_json("clamav.json")
+yara = load_json("yara.json")
+# Sorties optionnelles : tolérées absentes si une étape a été sautée
+docs = load_json("docs.json", {})
+archives = load_json("archives.json", {})
+special = load_json("special.json", {})
 
-with open(f"{LOGS}/yara.json") as f:
-    yara = json.load(f)
 
-# docs.json est produit par la nouvelle étape scan_docs.py (Office/PDF).
-# On tolère son absence pour ne pas casser un run où l'étape aurait été
-# sautée (compat descendante).
-docs = {}
-docs_path = f"{LOGS}/docs.json"
-if os.path.exists(docs_path):
-    with open(docs_path) as f:
-        docs = json.load(f)
+def clam_level(result):
+    if result == "OK":
+        return None
+    if result.startswith("ERREUR:") or result.startswith(CLAM_SUSPICIOUS_PREFIXES):
+        return "SUSPICIOUS"
+    return "INFECTED"
 
-archives = {}
-archives_path = f"{LOGS}/archives.json"
-if os.path.exists(archives_path):
-    with open(archives_path) as f:
-        archives = json.load(f)
 
 results = {}
-
 for filepath in files:
     clam = clamav.get(filepath, "OK")
     yar = yara.get(filepath, [])
     doc_flags = docs.get(filepath, [])
     archive_flags = archives.get(filepath, [])
+    special_flags = special.get(filepath, [])
+    level = clam_level(clam)
 
-    if clam != "OK":
+    if level == "INFECTED":
         verdict = "INFECTED"
-    elif yar or doc_flags or "ARCHIVE_PASSWORD_PROTECTED" in archive_flags:
-        # Une archive illisible sans mot de passe = ClamAV n'a rien pu
-        # vérifier dedans -> traitée comme suspecte, pas comme "CLEAN" par
-        # défaut (cf l'échantillon Mirai zippé/protégé passé inaperçu).
+    elif level or yar or doc_flags or archive_flags or special_flags:
+        # Une archive protégée, un fichier illisible ou un lien symbolique n'a
+        # pas pu être vérifié -> suspect, pas « CLEAN » par défaut (cf
+        # l'échantillon Mirai zippé/protégé passé inaperçu).
         verdict = "SUSPICIOUS"
     else:
         verdict = "CLEAN"
@@ -51,11 +57,11 @@ for filepath in files:
         "yara": yar,
         "docs": doc_flags,
         "archives": archive_flags,
+        "special": special_flags,
         "verdict": verdict
     }
 
-with open(f"{LOGS}/correlation.json", "w") as f:
-    json.dump(results, f, indent=2)
+write_json("correlation.json", results)
 
 infected = sum(1 for v in results.values() if v["verdict"] == "INFECTED")
 suspicious = sum(1 for v in results.values() if v["verdict"] == "SUSPICIOUS")

@@ -2,93 +2,103 @@
 """
 scan_archives.py — Détecte les archives protégées par mot de passe / chiffrées.
 
-Contexte : ClamAV ne peut pas inspecter le contenu d'une archive chiffrée et
-retourne "OK" faute de pouvoir se prononcer — un malware confirmé peut donc
-traverser le pipeline sans alerte s'il est simplement zippé avec mot de passe
-(ex: les échantillons MalwareBazaar, protégés exprès en "infected").
+Contexte : ClamAV ne peut pas inspecter le contenu d'une archive chiffrée. Il
+est lancé avec l'alerte « contenu chiffré » activée, mais ce script reste une
+seconde vérification indépendante : un fichier légitime sur une clé USB
+hôpital n'a normalement aucune raison d'être chiffré de cette façon.
 
-Ce script ne fait PAS d'extraction récursive du contenu (ça reste une étape
-à part, plus lourde, si besoin plus tard) — il flague juste le fait qu'une
-archive est illisible sans mot de passe, ce qui est en soi un signal fort
-sur une clé USB hôpital : un fichier légitime n'a normalement aucune raison
-d'être chiffré de cette façon.
+Formats vérifiés : ZIP/JAR (zipfile), 7z (py7zr), RAR (rarfile). tar et gzip
+n'ont pas de chiffrement natif : ClamAV les décompresse lui-même.
+Aucune extraction n'est faite, seuls les en-têtes sont lus.
 
 Produit logs/archives.json au même format que docs.json/yara.json :
 { "chemin/relatif": ["FLAG1", ...] }
 """
-import json
 import os
 import zipfile
 
 import magic
 
-BASE = "/opt/station-blanche"
-MOUNT = f"{BASE}/mount"
-LOGS = f"{BASE}/logs"
-
-ARCHIVE_MIMES = {
-    "application/zip",
-    "application/java-archive",  # .jar est un zip, même logique de chiffrement possible
-    "application/x-7z-compressed",
-    "application/x-rar",
-    "application/x-tar",
-    "application/gzip",
-}
+from common import MOUNT, is_regular_file, load_json, write_json
 
 ZIP_MIMES = {"application/zip", "application/java-archive"}
+SEVENZIP_MIMES = {"application/x-7z-compressed"}
+RAR_MIMES = {"application/x-rar", "application/vnd.rar", "application/x-rar-compressed"}
 
 
-def check_zip(abs_path: str) -> list:
-    flags = []
+def is_password_error(exc):
+    # py7zr et rarfile lèvent une exception PasswordRequired quand l'en-tête est chiffré
+    return "password" in type(exc).__name__.lower()
+
+
+def check_zip(abs_path):
     try:
         with zipfile.ZipFile(abs_path) as zf:
             for info in zf.infolist():
                 # bit 0 du flag = entrée chiffrée (mot de passe requis)
                 if info.flag_bits & 0x1:
-                    flags.append("ARCHIVE_PASSWORD_PROTECTED")
-                    break
+                    return ["ARCHIVE_PASSWORD_PROTECTED"]
     except zipfile.BadZipFile:
-        flags.append("ARCHIVE_CORRUPTED_OR_INVALID")
+        return ["ARCHIVE_CORRUPTED_OR_INVALID"]
     except Exception:
-        flags.append("ARCHIVE_READ_ERROR")
-    return flags
+        return ["ARCHIVE_READ_ERROR"]
+    return []
 
 
-def check_other_archive(abs_path: str) -> list:
-    # 7z/rar/tar.gz : pas encore de détection de mot de passe implémentée ici
-    # (nécessiterait py7zr / rarfile en dépendance supplémentaire). On le
-    # signale explicitement plutôt que de laisser passer en silence comme
-    # "CLEAN" sans avoir vraiment regardé.
-    return ["ARCHIVE_TYPE_NOT_ANALYZED"]
+def check_7z(abs_path):
+    try:
+        import py7zr
+    except ImportError:
+        return ["ARCHIVE_TYPE_NOT_ANALYZED"]
+    try:
+        with py7zr.SevenZipFile(abs_path, mode="r") as archive:
+            if archive.needs_password():
+                return ["ARCHIVE_PASSWORD_PROTECTED"]
+    except Exception as e:
+        return ["ARCHIVE_PASSWORD_PROTECTED"] if is_password_error(e) else ["ARCHIVE_READ_ERROR"]
+    return []
+
+
+def check_rar(abs_path):
+    try:
+        import rarfile
+    except ImportError:
+        return ["ARCHIVE_TYPE_NOT_ANALYZED"]
+    try:
+        with rarfile.RarFile(abs_path) as archive:
+            if archive.needs_password():
+                return ["ARCHIVE_PASSWORD_PROTECTED"]
+    except Exception as e:
+        return ["ARCHIVE_PASSWORD_PROTECTED"] if is_password_error(e) else ["ARCHIVE_READ_ERROR"]
+    return []
 
 
 def main():
-    with open(f"{LOGS}/files.json") as f:
-        files = json.load(f)
+    files = load_json("files.json")
 
     results = {}
     for rel_path in files:
         abs_path = os.path.join(MOUNT, rel_path)
-        if not os.path.isfile(abs_path):
+        if not is_regular_file(abs_path):
             continue
         try:
             mime = magic.from_file(abs_path, mime=True)
         except Exception:
             continue
 
-        if mime not in ARCHIVE_MIMES:
-            continue
-
         if mime in ZIP_MIMES:
             flags = check_zip(abs_path)
+        elif mime in SEVENZIP_MIMES:
+            flags = check_7z(abs_path)
+        elif mime in RAR_MIMES:
+            flags = check_rar(abs_path)
         else:
-            flags = check_other_archive(abs_path)
+            continue
 
         if flags:
             results[rel_path] = flags
 
-    with open(f"{LOGS}/archives.json", "w") as f:
-        json.dump(results, f, indent=2)
+    write_json("archives.json", results)
 
     protected = sum(1 for v in results.values() if "ARCHIVE_PASSWORD_PROTECTED" in v)
     print(f"[+] Vérification archives terminée : {len(results)} archive(s) signalée(s), dont {protected} protégée(s) par mot de passe")
