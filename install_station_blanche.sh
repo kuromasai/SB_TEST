@@ -36,7 +36,7 @@ fi
 #################################
 BASE="/opt/station-blanche"
 # Repo public -> clone HTTPS anonyme, aucun identifiant ni clé nécessaire.
-REPO_URL="https://github.com/kuromasai/test_sb.git"
+REPO_URL="https://github.com/kuromasai/SB_TEST.git"
 YARA_RULES_URL="https://github.com/Neo23x0/signature-base.git"
 ELASTIC_RULES_URL="https://github.com/elastic/protections-artifacts.git"
 CLAMD_CONF="/etc/clamav/clamd.conf"
@@ -88,11 +88,18 @@ apt install -y \
   libxcb-xinerama0 \
   libxcb-cursor0 \
   libmagic1 \
-  fonts-ibm-plex \
   git \
   rsync \
   curl \
   build-essential
+
+# Police IBM Plex : purement esthétique (l'interface et le rapport retombent sur
+# Arial/sans-serif). Absente de certains dépôts Debian : ne bloque pas l'installation.
+if apt-cache show fonts-ibm-plex >/dev/null 2>&1; then
+  apt install -y fonts-ibm-plex || echo "[!] Police IBM Plex non installée — police par défaut utilisée"
+else
+  echo "[!] Paquet fonts-ibm-plex indisponible — police par défaut utilisée"
+fi
 
 #################################
 # Installation YARA-X (binaire `yr`)
