@@ -198,6 +198,7 @@ fi
 # quarantaine, les rapports et les logs à chaque réinstallation.
 rsync -a --delete \
   --exclude='.git' \
+  --exclude='/file_test_sb/' \
   --exclude='/logs/' \
   --exclude='/mount/' \
   --exclude='/quarantine/' \
