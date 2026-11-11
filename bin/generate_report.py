@@ -14,7 +14,7 @@ from common import (
     LOGO_PATH, REPORTS, CLAMAV_MAX_AGE_DAYS, YARA_MAX_AGE_DAYS,
     CHU_BLUE_DARK, CHU_GRAY, CHU_BG, CHU_SURFACE, CHU_BORDER, CHU_TEXT,
     STATUS_GREEN, STATUS_ORANGE, STATUS_RED,
-    load_json, clamav_db_info, yara_rules_info, age_days,
+    INFO_FLAGS, load_json, clamav_db_info, yara_rules_info, age_days,
 )
 
 esc = html_module.escape
@@ -76,7 +76,8 @@ for filepath, v in correlation.items():
     safe_path = esc(filepath)
     safe_clam = esc(v["clamav"])
     safe_yara = esc(", ".join(v["yara"]))
-    safe_docs = esc(", ".join(v.get("docs", [])))
+    # Les flags informatifs (sans effet sur le verdict) sont marqués comme tels
+    safe_docs = esc(", ".join(f"{d} (info)" if d in INFO_FLAGS else d for d in v.get("docs", [])))
     safe_archives = esc(", ".join(v.get("archives", []) + v.get("special", [])))
     safe_verdict = esc(verdict_labels.get(v["verdict"], v["verdict"]))
     rows += f"""

@@ -3,18 +3,18 @@
 correlate.py — Joint toutes les sources sur le chemin relatif et calcule le verdict.
 
 Règle :
-- détection ClamAV (hors heuristiques ci-dessous) -> INFECTED
+- détection ClamAV par signature -> INFECTED
 - sinon, l'un des cas suivants -> SUSPICIOUS :
-  * ClamAV : erreur de lecture, limite dépassée (Heuristics.Limits.Exceeded*),
-    contenu chiffré (Heuristics.Encrypted*) — le fichier n'a pas été analysé ;
+  * ClamAV : détection heuristique (Heuristics.*, présomption et non malware
+    identifié : contenu chiffré, limite dépassée, PDF obfusqué…) ou erreur de lecture ;
   * correspondance YARA, flag document, flag archive ;
   * fichier spécial ou illisible (special.json).
 - sinon -> CLEAN
-"""
-from common import load_json, write_json
 
-# Heuristiques ClamAV qui signifient « pas pu analyser », pas « malveillant »
-CLAM_SUSPICIOUS_PREFIXES = ("Heuristics.Limits.Exceeded", "Heuristics.Encrypted")
+Les flags de INFO_FLAGS (ex. MACRO_AUTOEXEC) sont conservés pour le rapport
+mais n'influent pas sur le verdict.
+"""
+from common import INFO_FLAGS, load_json, write_json
 
 files = load_json("files.json")
 clamav = load_json("clamav.json")
@@ -28,7 +28,7 @@ special = load_json("special.json", {})
 def clam_level(result):
     if result == "OK":
         return None
-    if result.startswith("ERREUR:") or result.startswith(CLAM_SUSPICIOUS_PREFIXES):
+    if result.startswith("ERREUR:") or result.startswith("Heuristics."):
         return "SUSPICIOUS"
     return "INFECTED"
 
@@ -41,10 +41,11 @@ for filepath in files:
     archive_flags = archives.get(filepath, [])
     special_flags = special.get(filepath, [])
     level = clam_level(clam)
+    alert_doc_flags = [f for f in doc_flags if f not in INFO_FLAGS]
 
     if level == "INFECTED":
         verdict = "INFECTED"
-    elif level or yar or doc_flags or archive_flags or special_flags:
+    elif level or yar or alert_doc_flags or archive_flags or special_flags:
         # Une archive protégée, un fichier illisible ou un lien symbolique n'a
         # pas pu être vérifié -> suspect, pas « CLEAN » par défaut (cf
         # l'échantillon Mirai zippé/protégé passé inaperçu).

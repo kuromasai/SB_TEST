@@ -37,9 +37,9 @@ sur la station.
 | `suspect/archive_mot_de_passe.7z` | SUSPECT | `ARCHIVE_PASSWORD_PROTECTED` |
 | `suspect/archive_corrompue.zip` | SUSPECT | `ARCHIVE_CORRUPTED_OR_INVALID` |
 | `suspect/pdf_javascript.pdf` | SUSPECT | `PDF_JAVASCRIPT`, `PDF_AUTO_ACTION` |
-| `suspect/pdf_obfusque.pdf` | INFECTÉ | ClamAV (heuristique PDF sur les noms obfusqués) + `PDF_JAVASCRIPT`, `PDF_AUTO_ACTION` |
+| `suspect/pdf_obfusque.pdf` | SUSPECT | `PDF_JAVASCRIPT`, `PDF_AUTO_ACTION` (+ heuristique ClamAV probable) |
 | `suspect/pdf_launch.pdf` | SUSPECT | `PDF_AUTO_ACTION`, `PDF_LAUNCH_ACTION` |
-| `suspect/macro_autoexec.doc` | SUSPECT | `MACRO_AUTOEXEC` |
+| `suspect/macro_autoexec.doc` | **PROPRE** | `MACRO_AUTOEXEC (info)` — macro lancée à l'ouverture sans action dangereuse, courante dans les fichiers métier |
 | `suspect/macro_suspecte.doc` | SUSPECT | `MACRO_AUTOEXEC`, `MACRO_SUSPICIOUS` |
 | `suspect/rtf_equation.rtf` | SUSPECT | `RTF_OBJET_EMBARQUE`, `RTF_EQUATION_EDITOR` |
 | `suspect/facture.pdf` | SUSPECT | `EXECUTABLE_DEGUISE:application/x-dosexec` |
@@ -58,5 +58,5 @@ Points à contrôler en plus des verdicts :
 - Les deux `.doc` à macro sont des **faux documents** : du code VBA en texte brut, qu'olevba
   sait lire. Ils testent la chaîne olevba/mraptor, pas l'extraction depuis un vrai fichier
   Office. Pour ce cas, utiliser un `.docm` créé dans Word avec une macro `AutoOpen`.
-- ClamAV peut ajouter ses propres détections heuristiques sur certains leurres (PDF, RTF).
-  Le verdict reste le même, ou passe à INFECTÉ si ClamAV nomme une signature.
+- ClamAV peut ajouter ses propres détections sur certains leurres (PDF, RTF). Une détection
+  `Heuristics.*` donne SUSPECT ; seule une signature nommée (malware identifié) donne INFECTÉ.

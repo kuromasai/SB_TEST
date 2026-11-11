@@ -42,6 +42,13 @@ YARA_RULE_REPOS = [
 ]
 
 
+# Flags de détecteurs purement informatifs : affichés dans le rapport, sans
+# effet sur le verdict. Une macro lancée à l'ouverture est courante dans les
+# classeurs métier ; seule la combinaison « lancée à l'ouverture + écrit un
+# fichier ou lance un programme » (MACRO_SUSPICIOUS) rend le fichier suspect.
+INFO_FLAGS = {"MACRO_AUTOEXEC"}
+
+
 def rel_path(abs_path):
     """Chemin relatif au point de montage : clé de jointure de tout le pipeline."""
     return os.path.relpath(abs_path, MOUNT)
